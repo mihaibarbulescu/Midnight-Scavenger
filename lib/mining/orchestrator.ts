@@ -319,6 +319,7 @@ class MiningOrchestrator extends EventEmitter {
       if (challengeId !== this.currentChallengeId) {
         console.log('[Orchestrator] ========================================');
         console.log('[Orchestrator] NEW CHALLENGE DETECTED:', challengeId);
+        console.log('[Orchestrator] Challenge data:', JSON.stringify(challenge.challenge, null, 2));
         console.log('[Orchestrator] ========================================');
 
         // IMPORTANT: Stop any ongoing mining first to prevent ROM errors
@@ -521,7 +522,7 @@ class MiningOrchestrator extends EventEmitter {
     // CRITICAL: Make a DEEP COPY of the challenge object to prevent the polling loop
     // from updating our captured challenge data while we're mining
     const challengeId = this.currentChallengeId;
-    const challenge = { ...this.currentChallenge }; // Shallow copy creates new object reference
+    const challenge = JSON.parse(JSON.stringify(this.currentChallenge)); // Deep copy to freeze challenge data
     const difficulty = challenge.difficulty;
 
     // ROM should already be ready from pollAndMine - quick check only
@@ -767,9 +768,67 @@ class MiningOrchestrator extends EventEmitter {
               return; // Don't submit solution for old challenge
             }
 
+            console.log(`[Orchestrator] Worker ${workerId}: Captured challenge data during mining:`);
+            console.log(`[Orchestrator]   latest_submission: ${challenge.latest_submission}`);
+            console.log(`[Orchestrator]   no_pre_mine_hour: ${challenge.no_pre_mine_hour}`);
+            console.log(`[Orchestrator]   difficulty: ${challenge.difficulty}`);
+
+            // CRITICAL VALIDATION: Verify the server will compute the SAME hash we did
+            // Server rebuilds preimage from nonce using ITS challenge data, then validates
+            // If server's challenge data differs from ours, it computes a DIFFERENT hash!
+            console.log(`[Orchestrator] Worker ${workerId}: Validating solution will pass server checks...`);
+
+            if (this.currentChallenge) {
+              console.log(`[Orchestrator] Worker ${workerId}: Current challenge data (what server has):`);
+              console.log(`[Orchestrator]   latest_submission: ${this.currentChallenge.latest_submission}`);
+              console.log(`[Orchestrator]   no_pre_mine_hour: ${this.currentChallenge.no_pre_mine_hour}`);
+              console.log(`[Orchestrator]   difficulty: ${this.currentChallenge.difficulty}`);
+
+              // Check if challenge data changed (excluding difficulty which is checked separately)
+              const dataChanged =
+                challenge.latest_submission !== this.currentChallenge.latest_submission ||
+                challenge.no_pre_mine_hour !== this.currentChallenge.no_pre_mine_hour ||
+                challenge.no_pre_mine !== this.currentChallenge.no_pre_mine;
+
+              if (dataChanged) {
+                console.log(`[Orchestrator] Worker ${workerId}: ⚠️  Challenge data CHANGED since mining!`);
+                console.log(`[Orchestrator]   Recomputing hash with current challenge data to verify server will accept...`);
+
+                // Rebuild preimage with CURRENT challenge data (what server will use)
+                const serverPreimage = buildPreimage(nonce, addr.bech32, this.currentChallenge, false);
+
+                // Compute what hash the SERVER will get
+                const serverHash = await hashEngine.hashBatchAsync([serverPreimage]);
+                const serverHashHex = serverHash[0];
+
+                console.log(`[Orchestrator]   Our hash:     ${hash.slice(0, 32)}...`);
+                console.log(`[Orchestrator]   Server hash:  ${serverHashHex.slice(0, 32)}...`);
+
+                // Check if server's hash will meet difficulty
+                const serverHashValid = matchesDifficulty(serverHashHex, this.currentChallenge.difficulty);
+                console.log(`[Orchestrator]   Server hash meets difficulty? ${serverHashValid}`);
+
+                if (!serverHashValid) {
+                  console.log(`[Orchestrator] Worker ${workerId}: ✗ Server will REJECT this solution!`);
+                  console.log(`[Orchestrator]   Our hash met difficulty but server's recomputed hash does NOT`);
+                  console.log(`[Orchestrator]   This is why we get "Solution does not meet difficulty" errors!`);
+                  console.log(`[Orchestrator]   Discarding solution to avoid wasting API call and stopping workers`);
+
+                  // Clean up and continue mining
+                  this.pausedAddresses.delete(submissionKey);
+                  this.submittingAddresses.delete(submissionKey);
+                  continue; // Don't submit, keep mining
+                } else {
+                  console.log(`[Orchestrator] Worker ${workerId}: ✓ Server hash WILL be valid, safe to submit`);
+                }
+              } else {
+                console.log(`[Orchestrator] Worker ${workerId}: ✓ Challenge data unchanged, hash will be identical on server`);
+              }
+            }
+
             // Submit immediately with the challenge data we used during mining
             // Like midnight-scavenger-bot: no fresh fetch, no recomputation, just submit
-            console.log(`[Orchestrator] Worker ${workerId}: Submitting solution immediately (no fresh fetch)`);
+            console.log(`[Orchestrator] Worker ${workerId}: Submitting solution to API...`);
 
             // CRITICAL: Check if difficulty changed during mining
             // If difficulty increased (more zero bits required), our solution may no longer be valid

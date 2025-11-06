@@ -1,30 +1,16 @@
 /**
- * Difficulty validation following Hash Engine reference implementation.
+ * Difficulty validation using DUAL validation approach.
  *
- * Reference: hashengine/src/lib.rs hash_structure_good() lines 414-433
+ * CRITICAL: The server uses BOTH validation methods:
+ * 1. Heist Engine (zero-bits counting) - Fast initial filter
+ * 2. ShadowHarvester ((hash | mask) === mask) - Final server-side validation
  *
- * Hash Engine logic:
- * - Converts difficulty hex string to required zero bits count
- * - Checks if hash has that many leading zero bits
- * - Example: "000FFFFF" = 12 leading zero bits required (3 full zero bytes)
+ * We must pass BOTH checks or the server will reject the solution.
  *
- * LEGACY MODES (preserved for rollback via DIFFICULTY_MODE env var):
- * - 'hashengine': Use Hash Engine zero-bits counting (DEFAULT)
- * - 'legacy_spec': Old spec (hashPrefix & ~mask) === 0
- * - 'legacy_server_mask': (hashPrefix & mask) === 0
- * - 'legacy_server_le': Little-endian spec rule
- * - 'legacy_threshold': Numeric comparison hashPrefix <= mask
- * - 'legacy_threshold_le': LE threshold comparison
+ * Reference:
+ * - Heist Engine: hashengine/src/hashengine.rs hash_structure_good() lines 413-432
+ * - ShadowHarvester: shadowharvester/src/lib.rs hash_structure_good() lines 414-417
  */
-export type DifficultyMode = 'hashengine' | 'legacy_spec' | 'legacy_server_mask' | 'legacy_server_le' | 'legacy_threshold' | 'legacy_threshold_le';
-
-export function getDifficultyMode(): DifficultyMode {
-  const envMode = (process.env.DIFFICULTY_MODE || '').trim().toLowerCase();
-  if (envMode === 'legacy_spec' || envMode === 'legacy_server_mask' || envMode === 'legacy_server_le' || envMode === 'legacy_threshold' || envMode === 'legacy_threshold_le') {
-    return envMode as DifficultyMode;
-  }
-  return 'hashengine';
-}
 
 /**
  * Convert difficulty hex string to required zero bits count
@@ -99,135 +85,54 @@ export function matchesDifficulty(hashHex: string, difficultyHex: string, debug 
     throw new Error(`Invalid difficulty length: ${difficultyHex.length}, expected exactly 8 hex chars`);
   }
 
-  const mode = getDifficultyMode();
-
-  // Convert hash hex to bytes for hashengine mode
+  // Convert hash hex to bytes
   const hashBytes = new Uint8Array(hashHex.length / 2);
   for (let i = 0; i < hashHex.length; i += 2) {
     hashBytes[i / 2] = parseInt(hashHex.slice(i, i + 2), 16);
   }
 
-  // Hash Engine canonical validation (DEFAULT)
-  if (mode === 'hashengine') {
-    const requiredZeroBits = difficultyToZeroBits(difficultyHex);
-    const ok = hashStructureGood(hashBytes, requiredZeroBits);
+  // Extract first 4 bytes as u32 for ShadowHarvester check
+  const prefixHex = hashHex.slice(0, 8);
+  const hashPrefixBE = parseInt(prefixHex, 16) >>> 0;
+  const mask = parseInt(difficultyHex.slice(0, 8), 16) >>> 0;
 
-    if (debug || (ok && process.env.DEBUG_SOLUTIONS)) {
+  // === CHECK 1: Heist Engine (zero-bits counting) ===
+  // Fast initial filter to reduce candidates
+  const requiredZeroBits = difficultyToZeroBits(difficultyHex);
+  const heistEnginePass = hashStructureGood(hashBytes, requiredZeroBits);
+
+  // === CHECK 2: ShadowHarvester ((hash | mask) === mask) ===
+  // Final validation that server uses
+  // Reference: shadowharvester/src/lib.rs:414-417
+  const shadowHarvesterPass = ((hashPrefixBE | mask) >>> 0) === mask;
+
+  // BOTH checks must pass
+  const finalResult = heistEnginePass && shadowHarvesterPass;
+
+  if (debug || (finalResult && process.env.DEBUG_SOLUTIONS)) {
+    console.log(
+      `[Difficulty Check DUAL] hash=${prefixHex}... diff=${difficultyHex} ` +
+      `zeroBits=${requiredZeroBits} heistEngine=${heistEnginePass} shadowHarvester=${shadowHarvesterPass} ` +
+      `FINAL=${finalResult ? 'PASS ✓' : 'FAIL ✗'}`
+    );
+    if (heistEnginePass && !shadowHarvesterPass) {
       console.log(
-        `[Difficulty Check] mode=hashengine hash=${hashHex.slice(0, 16)}... diff=${difficultyHex} ` +
-        `required_zero_bits=${requiredZeroBits} result=${ok}`
+        `[Difficulty Check DUAL] ⚠️  Heist Engine passed but ShadowHarvester failed! ` +
+        `(0x${hashPrefixBE.toString(16).padStart(8, '0')} | 0x${mask.toString(16).padStart(8, '0')}) = ` +
+        `0x${((hashPrefixBE | mask) >>> 0).toString(16).padStart(8, '0')} ≠ 0x${mask.toString(16).padStart(8, '0')}`
       );
     }
-
-    return ok;
   }
 
-  // LEGACY MODES (for rollback)
-  const prefixHex = hashHex.slice(0, 8);
-  const mask = parseInt(difficultyHex.slice(0, 8), 16) >>> 0;
-  const hashPrefixBE = parseInt(prefixHex, 16) >>> 0;
-
-  const hashPrefixBytes = [
-    parseInt(prefixHex.slice(0, 2), 16),
-    parseInt(prefixHex.slice(2, 4), 16),
-    parseInt(prefixHex.slice(4, 6), 16),
-    parseInt(prefixHex.slice(6, 8), 16)
-  ];
-  const hashPrefixLE = (hashPrefixBytes[3] << 24) | (hashPrefixBytes[2] << 16) | (hashPrefixBytes[1] << 8) | hashPrefixBytes[0];
-  const hashPrefixLEU = hashPrefixLE >>> 0;
-
-  const maskBytes = [
-    parseInt(difficultyHex.slice(0, 2), 16),
-    parseInt(difficultyHex.slice(2, 4), 16),
-    parseInt(difficultyHex.slice(4, 6), 16),
-    parseInt(difficultyHex.slice(6, 8), 16)
-  ];
-  const maskLE = (maskBytes[3] << 24) | (maskBytes[2] << 16) | (maskBytes[1] << 8) | maskBytes[0];
-  const maskLEU = maskLE >>> 0;
-
-  let ok: boolean;
-  if (mode === 'legacy_spec') {
-    ok = (hashPrefixBE & (~mask >>> 0)) === 0;
-  } else if (mode === 'legacy_threshold') {
-    ok = hashPrefixBE <= mask;
-  } else if (mode === 'legacy_threshold_le') {
-    ok = hashPrefixLEU <= maskLEU;
-  } else if (mode === 'legacy_server_mask') {
-    ok = (hashPrefixBE & mask) === 0;
-  } else if (mode === 'legacy_server_le') {
-    ok = (hashPrefixLEU & (~mask >>> 0)) === 0;
-  } else {
-    // Fallback to hashengine
-    const requiredZeroBits = difficultyToZeroBits(difficultyHex);
-    ok = hashStructureGood(hashBytes, requiredZeroBits);
-  }
-
-  if (debug || (ok && process.env.DEBUG_SOLUTIONS)) {
-    const invMask = (~mask >>> 0);
-    const legacySpecCheck = (hashPrefixBE & invMask) === 0;
-    const legacyThresholdCheck = hashPrefixBE <= mask;
-    const legacyThresholdLeCheck = hashPrefixLEU <= maskLEU;
-    const legacyServerMaskCheck = (hashPrefixBE & mask) === 0;
-    const legacyServerLeCheck = (hashPrefixLEU & invMask) === 0;
-    console.log(
-      `[Difficulty Check] mode=${mode} hash=${prefixHex} diff=${difficultyHex.slice(0, 8)} ` +
-      `hashBE=0x${hashPrefixBE.toString(16).padStart(8, '0')} hashLE=0x${hashPrefixLEU.toString(16).padStart(8, '0')} ` +
-      `maskBE=0x${mask.toString(16).padStart(8, '0')} maskLE=0x${maskLEU.toString(16).padStart(8, '0')} ` +
-      `legacy_spec=${legacySpecCheck} legacy_threshold=${legacyThresholdCheck} legacy_threshold_le=${legacyThresholdLeCheck} ` +
-      `legacy_server_mask=${legacyServerMaskCheck} legacy_server_le=${legacyServerLeCheck} result=${ok}`
-    );
-  }
-
-  return ok;
+  return finalResult;
 }
 
 /**
  * Calculate expected hash rate based on difficulty
- * Hash Engine: 2^{required_zero_bits}
+ * Uses zero-bits counting (more restrictive of the two checks)
  */
 export function estimateHashesNeeded(difficultyHex: string): number {
-  const mode = getDifficultyMode();
-
-  // Hash Engine mode (DEFAULT)
-  if (mode === 'hashengine') {
-    const zeroBits = difficultyToZeroBits(difficultyHex);
-    return Math.pow(2, zeroBits);
-  }
-
-  // LEGACY MODES
-  const diffMaskBE = parseInt(difficultyHex.slice(0, 8), 16) >>> 0;
-
-  const maskBytes = [
-    parseInt(difficultyHex.slice(0, 2), 16),
-    parseInt(difficultyHex.slice(2, 4), 16),
-    parseInt(difficultyHex.slice(4, 6), 16),
-    parseInt(difficultyHex.slice(6, 8), 16)
-  ];
-  const diffMaskLE = ((maskBytes[3] << 24) | (maskBytes[2] << 16) | (maskBytes[1] << 8) | maskBytes[0]) >>> 0;
-
-  if (mode === 'legacy_server_mask') {
-    let ones = 0;
-    let m = diffMaskBE;
-    while (m) { m &= (m - 1); ones++; }
-    return Math.pow(2, ones);
-  }
-
-  if (mode === 'legacy_threshold') {
-    return Math.floor(0x1_0000_0000 / (diffMaskBE + 1));
-  }
-
-  if (mode === 'legacy_threshold_le') {
-    return Math.floor(0x1_0000_0000 / (diffMaskLE + 1));
-  }
-
-  // legacy_spec and legacy_server_le
-  const maskForZeroCount = (mode === 'legacy_server_le') ? diffMaskLE : diffMaskBE;
-  let zeroBits = 0;
-  for (let i = 0; i < 32; i++) {
-    if ((maskForZeroCount & (1 << i)) === 0) {
-      zeroBits++;
-    }
-  }
+  const zeroBits = difficultyToZeroBits(difficultyHex);
   return Math.pow(2, zeroBits);
 }
 
