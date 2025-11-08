@@ -91,6 +91,18 @@ interface HistoryData {
   };
 }
 
+interface SystemSpecSummary {
+  cpuModel: string;
+  cpuCores: number;
+  cpuLoad1m: number;
+  totalMemoryGB: number;
+  freeMemoryGB: number;
+  usedMemoryGB: number;
+  memoryUsagePercent: number;
+  platform: string;
+  arch: string;
+}
+
 function MiningDashboardContent() {
   const router = useRouter();
   const [password, setPassword] = useState<string | null>(null);
@@ -125,7 +137,7 @@ function MiningDashboardContent() {
   const [workers, setWorkers] = useState<Map<number, WorkerStatsState>>(new Map());
 
   // Scale tab state
-  const [scaleSpecs, setScaleSpecs] = useState<any>(null);
+  const [scaleSpecs, setScaleSpecs] = useState<SystemSpecSummary | null>(null);
   const [scaleRecommendations, setScaleRecommendations] = useState<any>(null);
   const [scaleLoading, setScaleLoading] = useState(false);
   const [scaleError, setScaleError] = useState<string | null>(null);
@@ -416,6 +428,17 @@ function MiningDashboardContent() {
 
     try {
       const response = await fetch('/api/system/specs');
+
+      if (response.status === 401) {
+        setScaleError('Operator authentication is required to load system specifications.');
+        return;
+      }
+
+      if (response.status === 404) {
+        setScaleError('System specifications are disabled for this deployment.');
+        return;
+      }
+
       const data = await response.json();
 
       if (data.success) {
@@ -2102,79 +2125,69 @@ function MiningDashboardContent() {
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Model:</span>
-                        <span className="font-mono text-white truncate ml-2" title={scaleSpecs.cpu.model}>
-                          {scaleSpecs.cpu.model.substring(0, 25)}...
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Cores:</span>
-                        <span className="font-mono text-white">{scaleSpecs.cpu.cores}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Speed:</span>
-                        <span className="font-mono text-white">{scaleSpecs.cpu.speed} MHz</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Load (1m):</span>
-                        <span className="font-mono text-white">{scaleSpecs.cpu.loadAverage[0].toFixed(2)}</span>
-                      </div>
-                    </CardContent>
-                  </Card>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Model:</span>
+                    <span className="font-mono text-white truncate ml-2" title={scaleSpecs.cpuModel || 'Unknown'}>
+                      {scaleSpecs.cpuModel || 'Unknown'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Cores:</span>
+                    <span className="font-mono text-white">{scaleSpecs.cpuCores}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Load (1m):</span>
+                    <span className="font-mono text-white">{scaleSpecs.cpuLoad1m.toFixed(2)}</span>
+                  </div>
+                </CardContent>
+              </Card>
 
-                  <Card variant="bordered">
-                    <CardHeader>
+              <Card variant="bordered">
+                <CardHeader>
                       <CardTitle className="flex items-center gap-2 text-lg">
                         <Memory className="w-5 h-5 text-purple-400" />
                         Memory
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Total:</span>
-                        <span className="font-mono text-white">{scaleSpecs.memory.total} GB</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Used:</span>
-                        <span className="font-mono text-white">{scaleSpecs.memory.used} GB</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Free:</span>
-                        <span className="font-mono text-white">{scaleSpecs.memory.free} GB</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Usage:</span>
-                        <span className="font-mono text-white">{scaleSpecs.memory.usagePercent}%</span>
-                      </div>
-                    </CardContent>
-                  </Card>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Total:</span>
+                    <span className="font-mono text-white">{scaleSpecs.totalMemoryGB.toFixed(2)} GB</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Used:</span>
+                    <span className="font-mono text-white">{scaleSpecs.usedMemoryGB.toFixed(2)} GB</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Free:</span>
+                    <span className="font-mono text-white">{scaleSpecs.freeMemoryGB.toFixed(2)} GB</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Usage:</span>
+                    <span className="font-mono text-white">{scaleSpecs.memoryUsagePercent.toFixed(1)}%</span>
+                  </div>
+                </CardContent>
+              </Card>
 
-                  <Card variant="bordered">
-                    <CardHeader>
+              <Card variant="bordered">
+                <CardHeader>
                       <CardTitle className="flex items-center gap-2 text-lg">
                         <Settings className="w-5 h-5 text-green-400" />
                         System
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Platform:</span>
-                        <span className="font-mono text-white">{scaleSpecs.system.platform}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Architecture:</span>
-                        <span className="font-mono text-white">{scaleSpecs.system.arch}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Uptime:</span>
-                        <span className="font-mono text-white">
-                          {Math.floor(scaleSpecs.system.uptime / 3600)}h {Math.floor((scaleSpecs.system.uptime % 3600) / 60)}m
-                        </span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Platform:</span>
+                    <span className="font-mono text-white">{scaleSpecs.platform}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Architecture:</span>
+                    <span className="font-mono text-white">{scaleSpecs.arch}</span>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
 
                 {/* Warnings */}
                 {scaleRecommendations.warnings.length > 0 && (

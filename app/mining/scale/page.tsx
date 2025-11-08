@@ -20,24 +20,16 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-interface SystemSpecs {
-  cpu: {
-    model: string;
-    cores: number;
-    speed: number;
-    loadAverage: number[];
-  };
-  memory: {
-    total: string;
-    free: string;
-    used: string;
-    usagePercent: string;
-  };
-  system: {
-    platform: string;
-    arch: string;
-    uptime: number;
-  };
+interface SystemSpecSummary {
+  cpuModel: string;
+  cpuCores: number;
+  cpuLoad1m: number;
+  totalMemoryGB: number;
+  freeMemoryGB: number;
+  usedMemoryGB: number;
+  memoryUsagePercent: number;
+  platform: string;
+  arch: string;
 }
 
 interface Recommendations {
@@ -62,7 +54,7 @@ interface Recommendations {
 
 export default function ScalePage() {
   const router = useRouter();
-  const [specs, setSpecs] = useState<SystemSpecs | null>(null);
+  const [specs, setSpecs] = useState<SystemSpecSummary | null>(null);
   const [recommendations, setRecommendations] = useState<Recommendations | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -77,6 +69,17 @@ export default function ScalePage() {
 
     try {
       const response = await fetch('/api/system/specs');
+
+      if (response.status === 401) {
+        setError('Operator authentication is required to load system specifications.');
+        return;
+      }
+
+      if (response.status === 404) {
+        setError('System specifications are disabled for this deployment.');
+        return;
+      }
+
       const data = await response.json();
 
       if (data.success) {
@@ -195,21 +198,17 @@ export default function ScalePage() {
             <CardContent className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-gray-400">Model:</span>
-                <span className="font-mono text-white truncate ml-2" title={specs.cpu.model}>
-                  {specs.cpu.model.substring(0, 25)}...
+                <span className="font-mono text-white truncate ml-2" title={specs.cpuModel || 'Unknown'}>
+                  {specs.cpuModel || 'Unknown'}
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-400">Cores:</span>
-                <span className="font-mono text-white">{specs.cpu.cores}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Speed:</span>
-                <span className="font-mono text-white">{specs.cpu.speed} MHz</span>
+                <span className="font-mono text-white">{specs.cpuCores}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-400">Load (1m):</span>
-                <span className="font-mono text-white">{specs.cpu.loadAverage[0].toFixed(2)}</span>
+                <span className="font-mono text-white">{specs.cpuLoad1m.toFixed(2)}</span>
               </div>
             </CardContent>
           </Card>
@@ -224,19 +223,19 @@ export default function ScalePage() {
             <CardContent className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-gray-400">Total:</span>
-                <span className="font-mono text-white">{specs.memory.total} GB</span>
+                <span className="font-mono text-white">{specs.totalMemoryGB.toFixed(2)} GB</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-400">Used:</span>
-                <span className="font-mono text-white">{specs.memory.used} GB</span>
+                <span className="font-mono text-white">{specs.usedMemoryGB.toFixed(2)} GB</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-400">Free:</span>
-                <span className="font-mono text-white">{specs.memory.free} GB</span>
+                <span className="font-mono text-white">{specs.freeMemoryGB.toFixed(2)} GB</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-400">Usage:</span>
-                <span className="font-mono text-white">{specs.memory.usagePercent}%</span>
+                <span className="font-mono text-white">{specs.memoryUsagePercent.toFixed(1)}%</span>
               </div>
             </CardContent>
           </Card>
@@ -251,17 +250,11 @@ export default function ScalePage() {
             <CardContent className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-gray-400">Platform:</span>
-                <span className="font-mono text-white">{specs.system.platform}</span>
+                <span className="font-mono text-white">{specs.platform}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-400">Architecture:</span>
-                <span className="font-mono text-white">{specs.system.arch}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Uptime:</span>
-                <span className="font-mono text-white">
-                  {Math.floor(specs.system.uptime / 3600)}h {Math.floor((specs.system.uptime % 3600) / 60)}m
-                </span>
+                <span className="font-mono text-white">{specs.arch}</span>
               </div>
             </CardContent>
           </Card>
