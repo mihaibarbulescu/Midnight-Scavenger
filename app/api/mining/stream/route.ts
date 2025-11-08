@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { miningOrchestrator } from '@/lib/mining/orchestrator';
 import { MiningEvent } from '@/lib/mining/types';
 import { requireOperatorAuth } from '@/app/api/_middleware/auth';
+import { sanitizeMiningEvent, sanitizeStats } from '@/lib/utils/redact';
 
 export async function GET(request: NextRequest) {
   const auth = requireOperatorAuth(request);
@@ -16,7 +17,7 @@ export async function GET(request: NextRequest) {
     start(controller) {
       // Send initial stats
       try {
-        const initialStats = miningOrchestrator.getStats();
+        const initialStats = sanitizeStats(miningOrchestrator.getStats());
         const data = `data: ${JSON.stringify({ type: 'stats', stats: initialStats })}\n\n`;
         controller.enqueue(encoder.encode(data));
       } catch (error) {
@@ -27,7 +28,12 @@ export async function GET(request: NextRequest) {
       const onEvent = (event: MiningEvent) => {
         if (isClosed) return;
         try {
-          const data = `data: ${JSON.stringify(event)}\n\n`;
+          const sanitized = sanitizeMiningEvent(event);
+          if (!sanitized) {
+            return;
+          }
+
+          const data = `data: ${JSON.stringify(sanitized)}\n\n`;
           controller.enqueue(encoder.encode(data));
         } catch (error) {
           console.error('Error sending event:', error);
@@ -50,7 +56,7 @@ export async function GET(request: NextRequest) {
       const statsInterval = setInterval(() => {
         if (isClosed) return;
         try {
-          const stats = miningOrchestrator.getStats();
+          const stats = sanitizeStats(miningOrchestrator.getStats());
           const data = `data: ${JSON.stringify({ type: 'stats', stats })}\n\n`;
           controller.enqueue(encoder.encode(data));
         } catch (error) {

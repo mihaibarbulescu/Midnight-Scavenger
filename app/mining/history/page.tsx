@@ -9,29 +9,21 @@ import { Alert } from '@/components/ui/alert';
 import { ArrowLeft, CheckCircle2, XCircle, Calendar, TrendingUp, Loader2, Copy, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-interface CryptoReceipt {
-  preimage: string;
-  timestamp: string;
-  signature: string;
-}
-
 interface ReceiptEntry {
-  ts: string;
-  address: string;
-  challenge_id: string;
-  nonce: string;
-  hash?: string;
-  crypto_receipt?: CryptoReceipt;
+  timestamp: string;
+  addressAlias: string;
+  addressMasked: string;
+  challengeId: string;
+  isDevFee: boolean;
+  hasReceipt: boolean;
 }
 
 interface ErrorEntry {
-  ts: string;
-  address: string;
-  challenge_id: string;
-  nonce: string;
-  hash?: string;
+  timestamp: string;
+  addressAlias: string;
+  addressMasked: string;
+  challengeId: string;
   error: string;
-  response?: any;
 }
 
 interface HistoryData {
@@ -98,7 +90,9 @@ export default function MiningHistory() {
     ];
 
     // Sort by timestamp
-    allEntries.sort((a, b) => new Date(b.data.ts).getTime() - new Date(a.data.ts).getTime());
+    allEntries.sort(
+      (a, b) => new Date(b.data.timestamp).getTime() - new Date(a.data.timestamp).getTime()
+    );
 
     if (filter === 'all') return allEntries;
     return allEntries.filter(e => e.type === filter);
@@ -244,38 +238,25 @@ export default function MiningHistory() {
                             {entry.type === 'success' ? 'Solution Accepted' : 'Submission Failed'}
                           </span>
                           <span className="text-xs text-gray-500">
-                            {formatDate(entry.data.ts)}
+                            {formatDate(entry.data.timestamp)}
                           </span>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
                           <div>
-                            <span className="text-gray-400">Address:</span>
-                            <div className="flex items-center gap-1">
-                              <span className="text-white font-mono text-xs">
-                                {entry.data.address.slice(0, 20)}...
-                              </span>
-                              <button
-                                onClick={() => copyToClipboard(entry.data.address, `addr-${index}`)}
-                                className="text-gray-400 hover:text-white transition-colors"
-                              >
-                                {copiedId === `addr-${index}` ? (
-                                  <Check className="w-3 h-3 text-green-400" />
-                                ) : (
-                                  <Copy className="w-3 h-3" />
-                                )}
-                              </button>
-                            </div>
+                            <span className="text-gray-400">Address Alias:</span>
+                            <div className="text-white font-mono text-xs">{entry.data.addressAlias}</div>
+                            <div className="text-gray-400 text-xs mt-1">{entry.data.addressMasked}</div>
                           </div>
 
                           <div>
                             <span className="text-gray-400">Challenge:</span>
                             <div className="flex items-center gap-1">
                               <span className="text-white font-mono text-xs">
-                                {entry.data.challenge_id.slice(0, 16)}...
+                                {entry.data.challengeId.slice(0, 16)}...
                               </span>
                               <button
-                                onClick={() => copyToClipboard(entry.data.challenge_id, `chal-${index}`)}
+                                onClick={() => copyToClipboard(entry.data.challengeId, `chal-${index}`)}
                                 className="text-gray-400 hover:text-white transition-colors"
                               >
                                 {copiedId === `chal-${index}` ? (
@@ -286,22 +267,6 @@ export default function MiningHistory() {
                               </button>
                             </div>
                           </div>
-
-                          <div>
-                            <span className="text-gray-400">Nonce:</span>
-                            <span className="text-white font-mono text-xs ml-2">
-                              {entry.data.nonce}
-                            </span>
-                          </div>
-
-                          {entry.data.hash && (
-                            <div>
-                              <span className="text-gray-400">Hash:</span>
-                              <span className="text-white font-mono text-xs ml-2">
-                                {entry.data.hash.slice(0, 16)}...
-                              </span>
-                            </div>
-                          )}
                         </div>
 
                         {entry.type === 'error' && (
@@ -311,7 +276,7 @@ export default function MiningHistory() {
                           </div>
                         )}
 
-                        {entry.type === 'success' && (entry.data as ReceiptEntry).crypto_receipt && (
+                        {entry.type === 'success' && (entry.data as ReceiptEntry).hasReceipt && (
                           <div className="mt-2 text-xs text-green-400">
                             ✓ Crypto receipt received
                           </div>

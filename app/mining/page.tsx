@@ -10,10 +10,10 @@ import { Modal } from '@/components/ui/modal';
 import { Play, Square, Home, Loader2, Activity, Clock, Target, Hash, CheckCircle2, Wallet, Terminal, ChevronDown, ChevronUp, Pause, Play as PlayIcon, Maximize2, Minimize2, Cpu, ListChecks, TrendingUp, TrendingDown, Calendar, Copy, Check, XCircle, Users, Award, Zap, MapPin, AlertCircle, Gauge, MemoryStick as Memory, RefreshCw, Settings, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-interface WorkerStats {
+interface WorkerStatsState {
   workerId: number;
-  addressIndex: number;
-  address: string;
+  addressAlias?: string;
+  addressMasked?: string;
   hashesComputed: number;
   hashRate: number;
   solutionsFound: number;
@@ -48,27 +48,25 @@ interface LogEntry {
 }
 
 interface ReceiptEntry {
-  ts: string;
-  address: string;
-  addressIndex?: number;
-  challenge_id: string;
-  nonce: string;
-  hash?: string;
+  timestamp: string;
+  addressAlias: string;
+  addressMasked: string;
+  challengeId: string;
+  isDevFee: boolean;
+  hasReceipt: boolean;
 }
 
 interface ErrorEntry {
-  ts: string;
-  address: string;
-  addressIndex?: number;
-  challenge_id: string;
-  nonce: string;
-  hash?: string;
+  timestamp: string;
+  addressAlias: string;
+  addressMasked: string;
+  challengeId: string;
   error: string;
 }
 
 interface AddressHistory {
-  addressIndex: number;
-  address: string;
+  addressAlias: string;
+  addressMasked: string;
   challengeId: string;
   successCount: number;
   failureCount: number;
@@ -77,8 +75,6 @@ interface AddressHistory {
   lastAttempt: string;
   failures: Array<{
     ts: string;
-    nonce: string;
-    hash: string;
     error: string;
   }>;
   successTimestamp?: string;
@@ -126,7 +122,7 @@ function MiningDashboardContent() {
   const [selectedAddressHistory, setSelectedAddressHistory] = useState<AddressHistory | null>(null);
 
   // Workers state
-  const [workers, setWorkers] = useState<Map<number, WorkerStats>>(new Map());
+  const [workers, setWorkers] = useState<Map<number, WorkerStatsState>>(new Map());
 
   // Scale tab state
   const [scaleSpecs, setScaleSpecs] = useState<any>(null);
@@ -195,52 +191,53 @@ function MiningDashboardContent() {
       if (data.type === 'stats') {
         setStats(data.stats);
 
-        // Update registration status based on stats
         if (data.stats.registeredAddresses < data.stats.totalAddresses) {
           setIsRegistering(true);
         } else {
           setIsRegistering(false);
-          setRegistrationProgress(null); // Clear progress when done
+          setRegistrationProgress(null);
         }
-
-        // Don't log generic stats - let the specific events (solution_submit, mining_start, etc.) handle logging
       } else if (data.type === 'registration_progress') {
-        // Update registration progress state
         setRegistrationProgress({
           current: data.current,
           total: data.total,
-          currentAddress: data.address,
+          currentAddress: data.addressAlias,
           message: data.message,
         });
 
-        // Log registration events
+        const logMessage = data.message as string;
         if (data.success) {
-          addLog(`✅ ${data.message}`, 'success');
-        } else if (data.message.includes('Failed')) {
-          addLog(`❌ ${data.message}`, 'error');
+          addLog(`✅ ${logMessage}`, 'success');
+        } else if (logMessage.toLowerCase().includes('failed')) {
+          addLog(`❌ ${logMessage}`, 'error');
         } else {
-          addLog(`🔄 ${data.message}`, 'info');
+          addLog(`🔄 ${logMessage}`, 'info');
         }
       } else if (data.type === 'mining_start') {
-        addLog(`🔨 Worker ${data.addressIndex}: Starting mining for challenge ${data.challengeId.slice(0, 12)}...`, 'info');
+        addLog(
+          `🔨 ${data.addressAlias}: Starting mining for challenge ${data.challengeId.slice(0, 12)}...`,
+          'info'
+        );
       } else if (data.type === 'hash_progress') {
-        addLog(`⚡ Worker ${data.addressIndex}: ${data.hashesComputed.toLocaleString()} hashes computed`, 'info');
+        addLog(
+          `⚡ ${data.addressAlias}: ${Number(data.hashesComputed).toLocaleString()} hashes computed`,
+          'info'
+        );
       } else if (data.type === 'solution_submit') {
-        addLog(`💎 Worker ${data.addressIndex}: Solution found! Submitting nonce ${data.nonce}...`, 'success');
+        addLog(`💎 ${data.addressAlias}: ${data.message}`, 'success');
       } else if (data.type === 'solution_result') {
         if (data.success) {
-          addLog(`✅ Solution for address ${data.addressIndex} ACCEPTED! ${data.message}`, 'success');
+          addLog(`✅ ${data.addressAlias}: ${data.message}`, 'success');
         } else {
-          addLog(`❌ Solution for address ${data.addressIndex} REJECTED: ${data.message}`, 'error');
+          addLog(`❌ ${data.addressAlias}: ${data.message}`, 'error');
         }
       } else if (data.type === 'worker_update') {
-        // Update worker stats
         setWorkers(prev => {
           const newWorkers = new Map(prev);
           newWorkers.set(data.workerId, {
             workerId: data.workerId,
-            addressIndex: data.addressIndex,
-            address: data.address,
+            addressAlias: data.addressAlias,
+            addressMasked: data.addressMasked,
             hashesComputed: data.hashesComputed,
             hashRate: data.hashRate,
             solutionsFound: data.solutionsFound,
@@ -251,6 +248,8 @@ function MiningDashboardContent() {
           });
           return newWorkers;
         });
+      } else if (data.type === 'solution') {
+        addLog(`💡 ${data.addressAlias}: Solution recorded`, 'info');
       } else if (data.type === 'error') {
         setError(data.message);
         addLog(`Error: ${data.message}`, 'error');
@@ -1188,9 +1187,6 @@ function MiningDashboardContent() {
                       ) : (
                         history.addressHistory
                           .filter(h => {
-                            // Filter out dev fee addresses (index -1)
-                            if (h.addressIndex === -1) return false;
-
                             if (historyFilter === 'all') return true;
                             if (historyFilter === 'success') return h.status === 'success';
                             if (historyFilter === 'error') return h.status === 'failed';
@@ -1198,7 +1194,7 @@ function MiningDashboardContent() {
                           })
                           .map((addressHistory, index) => (
                             <div
-                              key={`${addressHistory.addressIndex}-${addressHistory.challengeId}`}
+                              key={`${addressHistory.addressAlias}-${addressHistory.challengeId}`}
                               className={cn(
                                 'p-5 rounded-lg border-2 transition-all duration-200 cursor-pointer',
                                 addressHistory.status === 'success'
@@ -1211,35 +1207,35 @@ function MiningDashboardContent() {
                                   setFailureModalOpen(true);
                                 }
                               }}
-                            >
+                              >
                               <div className="flex items-center justify-between gap-4">
                                 {/* Left: Address Info */}
                                 <div className="flex items-center gap-4 flex-1">
                                   <div className="flex-shrink-0 w-16 h-16 rounded-lg bg-gray-800 flex items-center justify-center">
-                                    <span className="text-xl font-bold text-gray-300">#{addressHistory.addressIndex}</span>
+                                    <span className="text-xl font-bold text-gray-300">{addressHistory.addressAlias}</span>
                                   </div>
 
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-2 mb-1">
                                       <span className="text-white font-mono text-sm truncate">
-                                        {addressHistory.address.slice(0, 24)}...
+                                        {addressHistory.addressMasked}
                                       </span>
+                                    </div>
+                                    <div className="text-xs text-gray-500">
+                                      Challenge: {addressHistory.challengeId.slice(0, 16)}...
                                       <button
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          copyToClipboard(addressHistory.address, `addr-hist-${index}`);
+                                          copyToClipboard(addressHistory.challengeId, `chal-hist-${index}`);
                                         }}
-                                        className="text-gray-400 hover:text-white transition-colors"
+                                        className="ml-2 text-gray-400 hover:text-white transition-colors"
                                       >
-                                        {copiedId === `addr-hist-${index}` ? (
+                                        {copiedId === `chal-hist-${index}` ? (
                                           <Check className="w-3 h-3 text-green-400" />
                                         ) : (
                                           <Copy className="w-3 h-3" />
                                         )}
                                       </button>
-                                    </div>
-                                    <div className="text-xs text-gray-500">
-                                      Challenge: {addressHistory.challengeId.slice(0, 16)}...
                                     </div>
                                   </div>
                                 </div>
@@ -1324,7 +1320,7 @@ function MiningDashboardContent() {
                 <Modal
                   isOpen={failureModalOpen}
                   onClose={() => setFailureModalOpen(false)}
-                  title={`Failure Details - Address #${selectedAddressHistory?.addressIndex}`}
+                  title={`Failure Details - ${selectedAddressHistory?.addressAlias ?? ''}`}
                   size="lg"
                 >
                   {selectedAddressHistory && (
@@ -1332,7 +1328,7 @@ function MiningDashboardContent() {
                       <div className="grid grid-cols-2 gap-4 p-4 bg-gray-800 rounded-lg">
                         <div>
                           <div className="text-sm text-gray-400">Address</div>
-                          <div className="text-white font-mono text-sm">{selectedAddressHistory.address}</div>
+                          <div className="text-white font-mono text-sm">{selectedAddressHistory.addressMasked}</div>
                         </div>
                         <div>
                           <div className="text-sm text-gray-400">Challenge</div>
@@ -1355,17 +1351,11 @@ function MiningDashboardContent() {
                             <div key={idx} className="p-3 bg-red-900/10 border border-red-700/50 rounded-lg">
                               <div className="flex items-start justify-between gap-4 mb-2">
                                 <span className="text-xs text-gray-400">{formatDate(failure.ts)}</span>
-                                <span className="text-xs text-gray-500 font-mono">Nonce: {failure.nonce}</span>
                               </div>
                               <div className="text-sm text-red-300">
                                 <span className="text-red-400 font-semibold">Error: </span>
                                 {failure.error}
                               </div>
-                              {failure.hash && (
-                                <div className="text-xs text-gray-500 font-mono mt-1">
-                                  Hash: {failure.hash}
-                                </div>
-                              )}
                             </div>
                           ))}
                         </div>
@@ -1748,9 +1738,11 @@ function MiningDashboardContent() {
                                       )}
                                     </div>
                                     <div className="text-right">
-                                      <div className="text-sm text-gray-400">Address #{worker.addressIndex}</div>
-                                      <div className="text-xs text-gray-500 font-mono">
-                                        {worker.address.slice(0, 12)}...
+                                      <div className="text-sm text-gray-400">
+                                        Alias: {worker.addressAlias || 'N/A'}
+                                      </div>
+                                      <div className="text-xs text-gray-500 font-mono truncate">
+                                        {worker.addressMasked || 'Unavailable'}
                                       </div>
                                     </div>
                                   </div>
@@ -1969,9 +1961,9 @@ function MiningDashboardContent() {
                           if (addressFilter === 'unregistered') return !addr.registered;
                           return true;
                         })
-                        .map((address: any, index: number) => (
+                        .map((address: any) => (
                           <div
-                            key={address.index}
+                            key={address.alias}
                             className={cn(
                               'p-3 rounded-lg border transition-colors',
                               address.solvedCurrentChallenge
@@ -1982,31 +1974,21 @@ function MiningDashboardContent() {
                             <div className="flex items-center justify-between gap-4">
                               <div className="flex items-center gap-3 flex-1">
                                 {/* Index Badge */}
-                                <div className="flex-shrink-0 w-12 h-12 rounded-lg bg-gray-800 flex items-center justify-center">
-                                  <span className="text-lg font-bold text-gray-300">#{address.index}</span>
-                                </div>
-
-                                {/* Address Info */}
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <span className="text-white font-mono text-sm truncate">
-                                      {address.bech32}
-                                    </span>
-                                    <button
-                                      onClick={() => copyToClipboard(address.bech32, `address-${address.index}`)}
-                                      className="text-gray-400 hover:text-white transition-colors flex-shrink-0"
-                                    >
-                                      {copiedId === `address-${address.index}` ? (
-                                        <Check className="w-3 h-3 text-green-400" />
-                                      ) : (
-                                        <Copy className="w-3 h-3" />
-                                      )}
-                                    </button>
+                                  <div className="flex-shrink-0 w-12 h-12 rounded-lg bg-gray-800 flex items-center justify-center">
+                                    <span className="text-lg font-bold text-gray-300">{address.displayLabel}</span>
                                   </div>
-                                  <div className="flex items-center gap-2 text-xs">
-                                    <span className="text-gray-500">
-                                      Total Solutions: <span className="text-white font-semibold">{address.totalSolutions}</span>
-                                    </span>
+
+                                  {/* Address Info */}
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <span className="text-white font-mono text-sm truncate">
+                                        {address.maskedAddress}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-xs">
+                                      <span className="text-gray-500">
+                                        Total Solutions: <span className="text-white font-semibold">{address.totalSolutions}</span>
+                                      </span>
                                   </div>
                                 </div>
                               </div>
