@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { receiptsLogger } from '@/lib/storage/receipts-logger';
+import { requireOperatorAuth } from '@/app/api/_middleware/auth';
 
 interface AddressHistory {
   addressIndex: number;
@@ -19,7 +20,12 @@ interface AddressHistory {
   successTimestamp?: string;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const auth = requireOperatorAuth(request);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   try {
     const receipts = receiptsLogger.readReceipts();
     const errors = receiptsLogger.readErrors();

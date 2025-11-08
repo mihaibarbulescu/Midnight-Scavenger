@@ -4,8 +4,14 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { miningOrchestrator } from '@/lib/mining/orchestrator';
+import { requireOperatorAuth } from '@/app/api/_middleware/auth';
 
 export async function POST(req: NextRequest) {
+  const auth = requireOperatorAuth(req);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   try {
     const { workerThreads, batchSize } = await req.json();
 

@@ -14,6 +14,7 @@ import { receiptsLogger } from '@/lib/storage/receipts-logger';
 import { generateNonce } from './nonce';
 import { buildPreimage } from './preimage';
 import { devFeeManager } from '@/lib/devfee/manager';
+import { AuthenticationError } from '@/lib/errors/authentication-error';
 import * as os from 'os';
 
 interface SolutionTimestamp {
@@ -187,7 +188,23 @@ class MiningOrchestrator extends EventEmitter {
     console.log('[Orchestrator] Reinitialization complete, starting fresh mining session...');
 
     // Start fresh
-    await this.start(password);
+    try {
+      await this.start(password);
+    } catch (error: any) {
+      if (this.isAuthenticationFailure(error)) {
+        throw new AuthenticationError();
+      }
+      throw error;
+    }
+  }
+
+  private isAuthenticationFailure(error: any): boolean {
+    if (!error) {
+      return false;
+    }
+
+    const message = typeof error.message === 'string' ? error.message : String(error);
+    return message.includes('Failed to decrypt wallet') || message.includes('Incorrect password');
   }
 
   /**
