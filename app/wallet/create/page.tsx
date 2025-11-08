@@ -6,20 +6,25 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Alert } from '@/components/ui/alert';
-import { Lock, Eye, EyeOff, Copy, Check, ShieldAlert, ArrowLeft, Loader2 } from 'lucide-react';
+import { Lock, Eye, EyeOff, ShieldAlert, ArrowLeft, Loader2, Download } from 'lucide-react';
+
+type CreationResult = {
+  addressCount: number;
+  primaryAddress: string | null;
+  mnemonicExportAvailable: boolean;
+  message?: string;
+};
 
 export default function CreateWallet() {
   const router = useRouter();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [seedPhrase, setSeedPhrase] = useState<string | null>(null);
-  const [savedConfirm, setSavedConfirm] = useState(false);
+  const [creationResult, setCreationResult] = useState<CreationResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [addressCount] = useState(200);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   const handleCreateWallet = async () => {
     if (password !== confirmPassword) {
@@ -48,7 +53,12 @@ export default function CreateWallet() {
         throw new Error(data.error || 'Failed to create wallet');
       }
 
-      setSeedPhrase(data.seedPhrase);
+      setCreationResult({
+        addressCount: data.addressCount ?? 0,
+        primaryAddress: data.primaryAddress ?? null,
+        mnemonicExportAvailable: Boolean(data.mnemonicExportAvailable),
+        message: data.message,
+      });
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -57,22 +67,10 @@ export default function CreateWallet() {
   };
 
   const handleContinue = () => {
-    if (!savedConfirm) {
-      setError('Please confirm you have saved your seed phrase');
-      return;
-    }
     router.push('/wallet/load');
   };
 
-  const handleCopy = async () => {
-    if (seedPhrase) {
-      await navigator.clipboard.writeText(seedPhrase);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
-  if (seedPhrase) {
+  if (creationResult) {
     return (
       <div className="relative flex flex-col items-center justify-center min-h-screen p-8 overflow-hidden">
         {/* Background decoration */}
@@ -87,106 +85,78 @@ export default function CreateWallet() {
               <ShieldAlert className="w-10 h-10 text-red-400" />
             </div>
             <h1 className="text-4xl md:text-5xl font-bold text-white">
-              Backup Your Seed Phrase
+              Wallet Created Securely
             </h1>
             <p className="text-lg text-red-400 font-semibold">
-              This is the ONLY way to recover your wallet
+              Mnemonic storage is locked down to server operators only
             </p>
           </div>
 
           {/* Warning Alert */}
-          <Alert variant="error" title="Critical: Save Your Seed Phrase">
+          <Alert variant="error" title="Critical: Mnemonic access restricted">
             <ul className="space-y-2 mt-2">
               <li className="flex items-start gap-2">
                 <span className="shrink-0">1.</span>
-                <span>Write these 24 words on paper in order</span>
+                <span>The mnemonic is stored encrypted on the server and is never sent to the browser.</span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="shrink-0">2.</span>
-                <span>Store in a secure location (safe, vault, etc.)</span>
+                <span>Only an authenticated operator can retrieve it once using the provided export command.</span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="shrink-0">3.</span>
-                <span>Never share with anyone or store digitally</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="shrink-0">4.</span>
-                <span className="font-semibold">Without this phrase, your funds are LOST FOREVER</span>
+                <span>After export, the mnemonic retrieval is permanently disabled.</span>
               </li>
             </ul>
           </Alert>
 
-          {/* Seed Phrase Display */}
           <Card variant="elevated">
             <CardHeader>
-              <CardTitle className="text-center">Your 24-Word Seed Phrase</CardTitle>
+              <CardTitle className="text-center">Operator Export Workflow</CardTitle>
               <CardDescription className="text-center">
-                Keep this safe and never share it with anyone
+                Run from the server hosting this application
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 mb-6">
-                {seedPhrase.split(' ').map((word, index) => (
-                  <div
-                    key={index}
-                    className="bg-gray-700/50 border border-gray-600 p-3 rounded-lg hover:bg-gray-700 transition-colors"
-                  >
-                    <span className="text-gray-400 text-xs mr-2 font-medium">{index + 1}.</span>
-                    <span className="font-mono font-semibold text-white">{word}</span>
-                  </div>
-                ))}
+            <CardContent className="space-y-4">
+              {creationResult.message && (
+                <p className="text-center text-sm text-gray-300">{creationResult.message}</p>
+              )}
+              <div className="flex items-center gap-3 bg-gray-800/60 border border-gray-700 rounded-lg p-4">
+                <Download className="w-6 h-6 text-yellow-400" />
+                <div>
+                  <p className="text-sm text-gray-300">To export the mnemonic exactly once, run:</p>
+                  <code className="block mt-1 font-mono text-sm bg-black/40 px-3 py-2 rounded">npm run wallet:export</code>
+                </div>
               </div>
-
-              <Button
-                onClick={handleCopy}
-                variant={copied ? 'success' : 'secondary'}
-                size="lg"
-                className="w-full"
-              >
-                {copied ? (
-                  <>
-                    <Check className="w-5 h-5" />
-                    Copied to Clipboard!
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-5 h-5" />
-                    Copy to Clipboard
-                  </>
-                )}
-              </Button>
+              <p className="text-sm text-gray-400">
+                The export command requires operator confirmation and the wallet password. It will display the mnemonic once and
+                then permanently disable further exports.
+              </p>
             </CardContent>
           </Card>
 
-          {/* Confirmation */}
           <Card variant="bordered">
-            <CardContent className="pt-6">
-              <label className="flex items-start gap-4 cursor-pointer group">
-                <input
-                  type="checkbox"
-                  checked={savedConfirm}
-                  onChange={(e) => setSavedConfirm(e.target.checked)}
-                  className="mt-1 w-5 h-5 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900 cursor-pointer"
-                />
-                <span className="text-lg text-gray-200 group-hover:text-white transition-colors">
-                  I confirm that I have written down and securely stored my 24-word seed phrase.
-                  I understand that without it, I cannot recover my wallet.
+            <CardContent className="space-y-3">
+              <h2 className="text-xl font-semibold text-white">Wallet Summary</h2>
+              <p className="text-sm text-gray-400">
+                Derived addresses: <span className="text-white font-medium">{creationResult.addressCount}</span>
+              </p>
+              <p className="text-sm text-gray-400 break-all">
+                Primary address: <span className="text-white font-mono">{creationResult.primaryAddress || 'Unavailable'}</span>
+              </p>
+              <p className="text-sm text-gray-400">
+                Mnemonic export remaining:{' '}
+                <span className="text-white font-medium">
+                  {creationResult.mnemonicExportAvailable ? 'Available (one-time)' : 'Consumed'}
                 </span>
-              </label>
+              </p>
             </CardContent>
           </Card>
 
           {error && <Alert variant="error">{error}</Alert>}
 
-          {/* Actions */}
           <div className="flex flex-col gap-3">
-            <Button
-              onClick={handleContinue}
-              disabled={!savedConfirm}
-              variant="success"
-              size="xl"
-              className="w-full"
-            >
+            <Button onClick={handleContinue} variant="success" size="xl" className="w-full">
               Continue to Load Wallet
             </Button>
             <p className="text-center text-sm text-gray-500">

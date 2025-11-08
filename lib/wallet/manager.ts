@@ -6,6 +6,7 @@ import { encrypt, decrypt, EncryptedData } from './encryption';
 const SECURE_DIR = path.join(process.cwd(), 'secure');
 const SEED_FILE = path.join(SECURE_DIR, 'wallet-seed.json.enc');
 const DERIVED_ADDRESSES_FILE = path.join(SECURE_DIR, 'derived-addresses.json');
+const MNEMONIC_EXPORT_STATE_FILE = path.join(SECURE_DIR, 'mnemonic-export-state.json');
 
 export interface DerivedAddress {
   index: number;
@@ -14,9 +15,15 @@ export interface DerivedAddress {
   registered?: boolean;
 }
 
-export interface WalletInfo {
-  seedPhrase: string;
+export interface WalletCreationResult {
   addresses: DerivedAddress[];
+  mnemonicExportAvailable: boolean;
+}
+
+interface MnemonicExportState {
+  available: boolean;
+  createdAt: string;
+  retrievedAt: string | null;
 }
 
 export class WalletManager {
@@ -26,7 +33,7 @@ export class WalletManager {
   /**
    * Generate a new wallet with 24-word seed phrase
    */
-  async generateWallet(password: string, count: number = 40): Promise<WalletInfo> {
+  async generateWallet(password: string, count: number = 40): Promise<WalletCreationResult> {
     // Ensure secure directory exists
     if (!fs.existsSync(SECURE_DIR)) {
       fs.mkdirSync(SECURE_DIR, { recursive: true, mode: 0o700 });
@@ -55,9 +62,17 @@ export class WalletManager {
       { mode: 0o600 }
     );
 
+    this.writeMnemonicExportState({
+      available: true,
+      createdAt: new Date().toISOString(),
+      retrievedAt: null,
+    });
+
+    this.mnemonic = null;
+
     return {
-      seedPhrase: this.mnemonic,
       addresses: this.derivedAddresses,
+      mnemonicExportAvailable: true,
     };
   }
 
@@ -92,6 +107,39 @@ export class WalletManager {
    */
   walletExists(): boolean {
     return fs.existsSync(SEED_FILE);
+  }
+
+  mnemonicExportAvailable(): boolean {
+    const state = this.readMnemonicExportState();
+    return state.available;
+  }
+
+  async retrieveMnemonic(password: string): Promise<string> {
+    if (!fs.existsSync(SEED_FILE)) {
+      throw new Error('No wallet found. Please create a new wallet first.');
+    }
+
+    const state = this.readMnemonicExportState();
+    if (!state.available) {
+      throw new Error('Mnemonic export has already been used.');
+    }
+
+    const encryptedData: EncryptedData = JSON.parse(fs.readFileSync(SEED_FILE, 'utf8'));
+
+    let mnemonic: string;
+    try {
+      mnemonic = decrypt(encryptedData, password);
+    } catch (err) {
+      throw new Error('Failed to decrypt wallet. Incorrect password?');
+    }
+
+    this.writeMnemonicExportState({
+      available: false,
+      createdAt: state.createdAt,
+      retrievedAt: new Date().toISOString(),
+    });
+
+    return mnemonic;
   }
 
   /**
@@ -207,5 +255,41 @@ export class WalletManager {
         { mode: 0o600 }
       );
     }
+  }
+
+  private readMnemonicExportState(): MnemonicExportState {
+    if (!fs.existsSync(MNEMONIC_EXPORT_STATE_FILE)) {
+      return {
+        available: false,
+        createdAt: new Date(0).toISOString(),
+        retrievedAt: null,
+      };
+    }
+
+    try {
+      const data = JSON.parse(fs.readFileSync(MNEMONIC_EXPORT_STATE_FILE, 'utf8')) as MnemonicExportState;
+      return {
+        available: Boolean(data.available),
+        createdAt: typeof data.createdAt === 'string' ? data.createdAt : new Date(0).toISOString(),
+        retrievedAt: typeof data.retrievedAt === 'string' ? data.retrievedAt : null,
+      };
+    } catch (error) {
+      console.warn('[WalletManager] Failed to parse mnemonic export state, resetting.');
+      return {
+        available: false,
+        createdAt: new Date(0).toISOString(),
+        retrievedAt: null,
+      };
+    }
+  }
+
+  private writeMnemonicExportState(state: MnemonicExportState): void {
+    if (!fs.existsSync(SECURE_DIR)) {
+      fs.mkdirSync(SECURE_DIR, { recursive: true, mode: 0o700 });
+    }
+
+    fs.writeFileSync(MNEMONIC_EXPORT_STATE_FILE, JSON.stringify(state, null, 2), {
+      mode: 0o600,
+    });
   }
 }
