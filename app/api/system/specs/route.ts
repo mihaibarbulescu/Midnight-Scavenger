@@ -1,11 +1,39 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import * as os from 'os';
 import { miningOrchestrator } from '@/lib/mining/orchestrator';
+import { requireOperatorAuth } from '@/app/api/_middleware/auth';
 
 /**
  * System Specs API - Returns hardware specifications for scaling recommendations
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  // Allow operators to disable specs in production by default while keeping an override for trusted environments.
+  const disableFlag = process.env.DISABLE_SYSTEM_SPECS_ENDPOINT === 'true';
+  const enableFlag = process.env.ENABLE_SYSTEM_SPECS_ENDPOINT === 'true';
+  const disableEndpoint = disableFlag || (process.env.NODE_ENV === 'production' && !enableFlag);
+
+  if (disableEndpoint) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'System specifications endpoint is disabled for this deployment.',
+        specs: null,
+        recommendations: null,
+      },
+      {
+        status: 404,
+        headers: {
+          'Cache-Control': 'no-store',
+        },
+      },
+    );
+  }
+
+  const auth = requireOperatorAuth(request);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   try {
     const cpus = os.cpus();
     const totalMemory = os.totalmem();
@@ -19,11 +47,11 @@ export async function GET() {
     const cpuCount = cpus.length;
     const cpuSpeed = cpus[0]?.speed || 0;
 
-    // Calculate memory in GB
-    const totalMemoryGB = (totalMemory / (1024 ** 3)).toFixed(2);
-    const freeMemoryGB = (freeMemory / (1024 ** 3)).toFixed(2);
-    const usedMemoryGB = ((totalMemory - freeMemory) / (1024 ** 3)).toFixed(2);
-    const memoryUsagePercent = (((totalMemory - freeMemory) / totalMemory) * 100).toFixed(1);
+    // Calculate memory in GB (numbers rounded to 2 decimals)
+    const totalMemoryGB = Number((totalMemory / 1024 ** 3).toFixed(2));
+    const freeMemoryGB = Number((freeMemory / 1024 ** 3).toFixed(2));
+    const usedMemoryGB = Number(((totalMemory - freeMemory) / 1024 ** 3).toFixed(2));
+    const memoryUsagePercent = Number((((totalMemory - freeMemory) / totalMemory) * 100).toFixed(1));
 
     // Get current configuration from orchestrator
     const currentConfig = miningOrchestrator.getCurrentConfiguration();
@@ -32,44 +60,53 @@ export async function GET() {
     const recommendations = calculateRecommendations({
       cpuCount,
       cpuSpeed,
-      totalMemoryGB: parseFloat(totalMemoryGB),
+      totalMemoryGB,
       platform,
       currentWorkerThreads: currentConfig.workerThreads,
       currentBatchSize: currentConfig.batchSize,
     });
 
-    return NextResponse.json({
-      success: true,
-      specs: {
-        cpu: {
-          model: cpuModel,
-          cores: cpuCount,
-          speed: cpuSpeed,
-          loadAverage: loadAvg,
-        },
-        memory: {
-          total: totalMemoryGB,
-          free: freeMemoryGB,
-          used: usedMemoryGB,
-          usagePercent: memoryUsagePercent,
-        },
-        system: {
-          platform,
-          arch,
-          uptime: os.uptime(),
+    const specs = {
+      cpuModel,
+      cpuCores: cpuCount,
+      cpuLoad1m: Number(loadAvg[0].toFixed(2)),
+      totalMemoryGB,
+      freeMemoryGB,
+      usedMemoryGB,
+      memoryUsagePercent,
+      platform,
+      arch,
+    };
+
+    return NextResponse.json(
+      {
+        success: true,
+        specs,
+        recommendations,
+      },
+      {
+        headers: {
+          'Cache-Control': 'private, max-age=30',
         },
       },
-      recommendations,
-    });
+    );
   } catch (error: any) {
     console.error('[System Specs API] Failed to get system specs:', error.message);
 
-    return NextResponse.json({
-      success: false,
-      error: 'Failed to retrieve system specifications',
-      specs: null,
-      recommendations: null,
-    }, { status: 500 });
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Failed to retrieve system specifications',
+        specs: null,
+        recommendations: null,
+      },
+      {
+        status: 500,
+        headers: {
+          'Cache-Control': 'no-store',
+        },
+      },
+    );
   }
 }
 
