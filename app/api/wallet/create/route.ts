@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { WalletManager } from '@/lib/wallet/manager';
+import { requireOperatorAuth } from '@/app/api/_middleware/auth';
 
 export async function POST(request: NextRequest) {
+  const auth = requireOperatorAuth(request);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   try {
     const { password, count } = await request.json();
 
@@ -35,9 +41,11 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      seedPhrase: walletInfo.seedPhrase,
       addressCount: walletInfo.addresses.length,
-      primaryAddress: walletInfo.addresses[0]?.bech32,
+      primaryAddress: walletInfo.addresses[0]?.bech32 ?? null,
+      mnemonicExportAvailable: walletInfo.mnemonicExportAvailable,
+      message:
+        'Wallet created and mnemonic stored securely. Use the operator export workflow to retrieve the phrase once if required.',
     });
   } catch (error: any) {
     console.error('[API] Wallet creation error:', error);
