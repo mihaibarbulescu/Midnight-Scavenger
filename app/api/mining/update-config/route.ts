@@ -4,8 +4,14 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { miningOrchestrator } from '@/lib/mining/orchestrator';
+import { ensureOperatorAuth } from '@/lib/security/auth';
 
 export async function POST(req: NextRequest) {
+  const authResponse = ensureOperatorAuth(req);
+  if (authResponse) {
+    return authResponse;
+  }
+
   try {
     const { workerThreads, batchSize } = await req.json();
 
@@ -39,8 +45,12 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error: any) {
+    console.error('[API] Mining update-config error:', error);
     return NextResponse.json(
-      { success: false, error: error.message || 'Failed to update configuration' },
+      {
+        success: false,
+        error: 'Failed to update configuration. Please try again later.',
+      },
       { status: 500 }
     );
   }

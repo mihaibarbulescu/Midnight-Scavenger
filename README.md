@@ -57,6 +57,16 @@ This software includes a small development fee to support ongoing maintenance an
 
 4. **Access the app** at `http://localhost:3001`
 
+### Secure the Operator API
+
+Set a strong API token to protect the local mining controls. Create a `.env` file (if you don't already have one) and add:
+
+```env
+MINING_OPERATOR_TOKEN="generate-a-long-random-token"
+```
+
+Every request to the mining control endpoints (`/api/mining/start`, `/api/mining/stop`, `/api/mining/update-config`, `/api/mining/status`) must now include an `Authorization: Bearer <token>` header. Without the token, the server will reject the request.
+
 ## Usage
 
 Run: setup.cmd
