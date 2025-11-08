@@ -1,8 +1,14 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { miningOrchestrator } from '@/lib/mining/orchestrator';
 import { MiningEvent } from '@/lib/mining/types';
+import { requireOperatorAuth } from '@/app/api/_middleware/auth';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const auth = requireOperatorAuth(request);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   const encoder = new TextEncoder();
   let isClosed = false;
 

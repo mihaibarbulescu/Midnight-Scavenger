@@ -1,7 +1,13 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { miningOrchestrator } from '@/lib/mining/orchestrator';
+import { requireOperatorAuth } from '@/app/api/_middleware/auth';
 
-export async function POST() {
+export async function POST(request: NextRequest) {
+  const auth = requireOperatorAuth(request);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   try {
     miningOrchestrator.stop();
 
