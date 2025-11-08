@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { receiptsLogger } from '@/lib/storage/receipts-logger';
 import { requireOperatorAuth } from '@/app/api/_middleware/auth';
+import { describeAddress } from '@/lib/utils/redact';
 
 interface AddressHistory {
-  addressIndex: number;
-  address: string;
+  addressAlias: string;
+  addressMasked: string;
   challengeId: string;
   successCount: number;
   failureCount: number;
@@ -13,8 +14,6 @@ interface AddressHistory {
   lastAttempt: string;
   failures: Array<{
     ts: string;
-    nonce: string;
-    hash: string;
     error: string;
   }>;
   successTimestamp?: string;
@@ -39,12 +38,13 @@ export async function GET(request: NextRequest) {
 
     // Process errors first
     errors.forEach(error => {
-      const key = `${error.addressIndex ?? '?'}:${error.challenge_id}`;
+      const key = `${error.address}:${error.challenge_id}`;
 
       if (!addressHistoryMap.has(key)) {
+        const { alias, masked } = describeAddress(error.address);
         addressHistoryMap.set(key, {
-          addressIndex: error.addressIndex ?? -1,
-          address: error.address,
+          addressAlias: alias,
+          addressMasked: masked,
           challengeId: error.challenge_id,
           successCount: 0,
           failureCount: 0,
@@ -60,8 +60,6 @@ export async function GET(request: NextRequest) {
       history.totalAttempts++;
       history.failures.push({
         ts: error.ts,
-        nonce: error.nonce,
-        hash: error.hash,
         error: error.error,
       });
 
@@ -73,12 +71,13 @@ export async function GET(request: NextRequest) {
 
     // Process successes
     receipts.forEach(receipt => {
-      const key = `${receipt.addressIndex ?? '?'}:${receipt.challenge_id}`;
+      const key = `${receipt.address}:${receipt.challenge_id}`;
 
       if (!addressHistoryMap.has(key)) {
+        const { alias, masked } = describeAddress(receipt.address);
         addressHistoryMap.set(key, {
-          addressIndex: receipt.addressIndex ?? -1,
-          address: receipt.address,
+          addressAlias: alias,
+          addressMasked: masked,
           challengeId: receipt.challenge_id,
           successCount: 0,
           failureCount: 0,
@@ -112,18 +111,45 @@ export async function GET(request: NextRequest) {
     const addressHistory = Array.from(addressHistoryMap.values())
       .sort((a, b) => new Date(b.lastAttempt).getTime() - new Date(a.lastAttempt).getTime());
 
+    const sanitizedReceipts = receipts.map(receipt => {
+      const { alias, masked } = describeAddress(receipt.address);
+
+      return {
+        timestamp: receipt.ts,
+        addressAlias: alias,
+        addressMasked: masked,
+        challengeId: receipt.challenge_id,
+        isDevFee: Boolean(receipt.isDevFee),
+        hasReceipt: Boolean(receipt.crypto_receipt),
+      };
+    });
+
+    const sanitizedErrors = errors.map(error => {
+      const { alias, masked } = describeAddress(error.address);
+
+      return {
+        timestamp: error.ts,
+        addressAlias: alias,
+        addressMasked: masked,
+        challengeId: error.challenge_id,
+        error: error.error,
+      };
+    });
+
+    const summary = {
+      totalSolutions: sanitizedReceipts.length,
+      totalErrors: sanitizedErrors.length,
+      successRate: sanitizedReceipts.length + sanitizedErrors.length > 0
+        ? ((sanitizedReceipts.length / (sanitizedReceipts.length + sanitizedErrors.length)) * 100).toFixed(2) + '%'
+        : '0%'
+    };
+
     return NextResponse.json({
       success: true,
-      receipts,
-      errors,
+      receipts: sanitizedReceipts,
+      errors: sanitizedErrors,
       addressHistory,
-      summary: {
-        totalSolutions: receipts.length,
-        totalErrors: errors.length,
-        successRate: receipts.length + errors.length > 0
-          ? ((receipts.length / (receipts.length + errors.length)) * 100).toFixed(2) + '%'
-          : '0%'
-      }
+      summary,
     });
   } catch (error: any) {
     console.error('[API] Mining history error:', error);

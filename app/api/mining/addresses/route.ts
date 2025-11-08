@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { miningOrchestrator } from '@/lib/mining/orchestrator';
 import { receiptsLogger } from '@/lib/storage/receipts-logger';
 import { requireOperatorAuth } from '@/app/api/_middleware/auth';
+import { describeAddress } from '@/lib/utils/redact';
 
 export async function GET(request: NextRequest) {
   const auth = requireOperatorAuth(request);
@@ -32,15 +33,20 @@ export async function GET(request: NextRequest) {
     });
 
     // Build address list with solved status and solution counts
-    const addresses = addressData.addresses.map(addr => ({
-      index: addr.index,
-      bech32: addr.bech32,
-      registered: addr.registered || false,
-      solvedCurrentChallenge: addressData.currentChallengeId
-        ? addressData.solvedAddressChallenges.get(addr.bech32)?.has(addressData.currentChallengeId) || false
-        : false,
-      totalSolutions: solutionsByAddress.get(addr.bech32) || 0,
-    }));
+    const addresses = addressData.addresses.map((addr, idx) => {
+      const { alias, masked } = describeAddress(addr.bech32);
+
+      return {
+        alias,
+        displayLabel: `Address ${idx + 1}`,
+        maskedAddress: masked,
+        registered: addr.registered || false,
+        solvedCurrentChallenge: addressData.currentChallengeId
+          ? addressData.solvedAddressChallenges.get(addr.bech32)?.has(addressData.currentChallengeId) || false
+          : false,
+        totalSolutions: solutionsByAddress.get(addr.bech32) || 0,
+      };
+    });
 
     // Calculate summary stats
     const summary = {
